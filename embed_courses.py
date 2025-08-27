@@ -67,18 +67,30 @@ api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key)
 
 embeddings = {}
-for id in tqdm(courses_df.project_id.unique()[:400], desc="Embedding courses"):
+for (i, id) in tqdm(enumerate(courses_df.project_id.unique()), desc="Embedding courses", total=len(courses_df.project_id.unique())):
     subset = courses_df.loc[courses_df.project_id == id]
     first_row = subset.iloc[0]
 
+    name = courses_df.loc[courses_df.project_id == id, 'project_name'].dropna().iloc[0]
     topics = ', '.join(courses_df.loc[courses_df.project_id == id, 'subject_short_name'].dropna().astype(str).tolist())
 
     response = client.models.embed_content(
         model="gemini-embedding-001",
-        contents=topics,
+        contents=f"{name}, {topics}",
         config=types.EmbedContentConfig(output_dimensionality=768))  # use 768, 1536, or 3072
     embedding = np.array(response.embeddings[0].values, dtype=float)
+    embedding = embedding / np.linalg.norm(embedding)
     embeddings[id] = embedding
+
+    if i > 0 and i % 200 == 0:
+        print(f"Processed {i} courses, saving intermediate results...")
+        out_dir = "course_embeddings"
+        os.makedirs(out_dir, exist_ok=True)
+        ids_list = list(embeddings.keys())
+        ids_arr = np.array(ids_list, dtype=int)
+        vecs = np.vstack([embeddings[i] for i in ids_list])
+        np.savez_compressed(os.path.join(out_dir, "course_embeddings.npz"),
+                            ids=ids_arr, embeddings=vecs)
 
 out_dir = "course_embeddings"
 os.makedirs(out_dir, exist_ok=True)
