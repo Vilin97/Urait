@@ -1,7 +1,6 @@
 #%%
 
 import pandas as pd
-import numpy as np
 
 #%%
 courses_df = pd.read_csv(

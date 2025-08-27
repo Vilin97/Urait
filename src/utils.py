@@ -1,10 +1,8 @@
 import numpy as np
-import pandas as pd
 from google import genai
 from google.genai import types
 import httpx
 import os
-import ast
 from dotenv import load_dotenv
 import json
 
