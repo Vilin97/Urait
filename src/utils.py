@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import json
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_SUITABILITY_PROMPT = """Given the course title and topics, determine if this course can be used to teach the given discipline in a college course. The course might contain many topics, but as long as it covers most of the topics (>70%) of the discipline, it is acceptable. Respond in Russian with a short explanation."""
 
 def get_api_client(api_key_name="GOOGLE_API_KEY"):
     """Make a genai client from an env var.
@@ -75,12 +76,10 @@ def get_most_similar(embedding, embeddings_by_id, top_k=5):
     top_sims = [sims[i] for i in top_indices]
     return list(zip(top_ids, top_sims))
 
-def determine_course_suitability(discipline_name, discipline_topics, course_name, course_topics, client, model=DEFAULT_MODEL):
+def determine_course_suitability(discipline_name, discipline_topics, course_name, course_topics, client, model=DEFAULT_MODEL, main_prompt=DEFAULT_SUITABILITY_PROMPT):
     """Determine if a course is suitable for teaching a discipline based on topics."""
 
-    prompt = f"""Given the course title and topics, determine if this course can be used to teach the given discipline in a college course. Be strict: if in doubt, answer "Нет". The course might contain many topics, but as long as it covers the core topics of the discipline, it is acceptable. Respond in Russian with a short explanation.
-
-    Respond ONLY with a single valid JSON object (no extra text). Schema:
+    prompt = main_prompt+f"""\nRespond ONLY with a single valid JSON object (no extra text). Schema:
     {{
     "explanation": "<short explanation in Russian>",
     "answer": "Да" or "Нет",
