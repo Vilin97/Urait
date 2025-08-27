@@ -5,7 +5,7 @@
 # - (DONE) embed this contents 
 # - (DONE) embed the contents from Urait
 # - (DONE) find 10 most similar by cosine similarity
-# - use an LLM to see if any one them actually covers the discipline
+# - (DONE) use an LLM to see if any one them actually covers the discipline
 
 #%%
 # parse
@@ -18,7 +18,6 @@ import os
 import ast
 from dotenv import load_dotenv
 import json
-import re
 #%%
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
@@ -229,7 +228,7 @@ response = client.models.generate_content(
     contents=[prompt],
 )
 #%%
-# extract the genearated topics
+# extract the generated topics
 text = response.text
 start = text.find('[')
 end = text.rfind(']')
