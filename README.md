@@ -13,8 +13,8 @@ The reason for generating topics is for better matching, since the discipline na
 
 ## How to run
 
+0. Run `pip install -r requirements.txt`
 1. download `project_subjects.csv` from [drive](https://drive.google.com/drive/folders/16_rbQxV5SVpZemgS0NN0-Odo4ORpZXfv).
-
 2. make a `.env` file with `GOOGLE_API_KEY=your_key`.
 3. run `embed_courses.py` to create the course embeddings.
 4. run `parse_disciplines.py` to parse disciplines from the university URL and decide whether there is a course that can be used to teach it.
