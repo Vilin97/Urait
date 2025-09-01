@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 import json
 
 DEFAULT_MODEL = "gemini-2.5-flash"
-DEFAULT_SUITABILITY_PROMPT = """Given the course title and topics, determine if this course can be used to teach the given discipline in a college course. The course might contain many topics, but as long as it covers most of the topics (>70%) of the discipline, it is acceptable. Respond in Russian with a short explanation."""
 
 def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     """Make a genai client from an env var.
@@ -68,36 +67,70 @@ def load_course_embeddings(npz_path="course_embeddings/course_embeddings.npz"):
     embeddings_by_id = {int(i): vec for i, vec in zip(loaded_ids, vecs)}
     return embeddings_by_id
 
-def get_most_similar(embedding, embeddings_by_id, top_k=5):
-    """Get the top_k most similar course ids to the given embedding."""
-    ids = list(embeddings_by_id.keys())
-    vecs = np.vstack([embeddings_by_id[i] for i in ids])
-    sims = vecs @ embedding
+def get_most_similar(embedding, embeddings, top_k=5):
+    """Get the top_k most similar course ids to the given embedding.
+    embeddings: np.ndarray of shape (num_courses, embedding_dim)
+    Returns: List of indices of the most similar courses and their similarity scores."""
+    sims = embeddings @ embedding
     top_indices = np.argsort(sims)[-top_k:][::-1]
-    top_ids = [ids[i] for i in top_indices]
-    top_sims = [sims[i] for i in top_indices]
-    return list(zip(top_ids, top_sims))
+    top_scores = sims[top_indices]
+    return top_indices, top_scores
+    
 
 ### Course-discipline suitability determination ###
-def determine_course_suitability(discipline_name, discipline_topics, course_name, course_topics, client, model=DEFAULT_MODEL, main_prompt=DEFAULT_SUITABILITY_PROMPT):
+SCHEMA = {
+    "type": "object",
+    "propertyOrdering": ["covered_topics","missing_topics","explanation","answer"],
+    "required": ["covered_topics","missing_topics","explanation","answer"],
+    "properties": {
+        "covered_topics": {"type": "string"},
+        "missing_topics": {"type": "string"},
+        "explanation": {"type": "string"},
+        "answer": {"type": "string", "enum": ["Да","Нет"]},
+    },
+}
+
+def determine_course_suitability(speciality, discipline_name, discipline_topics, course_name, course_topics, client, model=DEFAULT_MODEL):
     """Determine if a course is suitable for teaching a discipline based on topics."""
 
-    prompt = main_prompt+f"""\nRespond ONLY with a single valid JSON object (no extra text). Schema:
+    main_prompt = """You are a Russian expert educational consultant specializing in higher education (university/college).
+    Your task is to determine whether a given course is suitable for teaching a specific college discipline.
+    You are given the speciality/major, discipline name and the topics of the discipline, as well as the textbook title and topics.
+    You must decide if the course is suitable for teaching the discipline, and also determine the topics of the discipline that are covered by the course, and the topics that are missing. One of these lists may be empty.
+    Do not invent topics. Only use the topics listed in 'Discipline Topics'.
+    Use your expert judgment for semantic equivalence of topics (paraphrases, synonyms, abbreviations, close variants). Prefer meaning over exact wording.
+    The explanation must be in Russian, no longer than 2 sentences.
+    Respond ONLY with a single valid JSON object (no Markdown, no comments, no extra text).
+    'answer' is 'Да' if the course covers >70% core topics of the discipline; otherwise 'Нет'.
+    """
+
+    schema = f"""
+    Schema:
     {{
+    "covered_topics": ["<list of topics from discipline covered by the course, separated by `;`>"],
+    "missing_topics": ["<list of topics from discipline NOT covered by the course, separated by `;`>"],
     "explanation": "<short explanation in Russian>",
-    "answer": "Да" or "Нет",
+    "answer": <"Да" | "Нет">
     }}
 
+    Speciality: {speciality}
     Discipline: {discipline_name}
     Discipline Topics: {discipline_topics}
 
     Course Title: {course_name}
-    Topics: {course_topics}
+    Course Topics: {course_topics}
     """
+
+    prompt = main_prompt + schema
 
     response = client.models.generate_content(
         model=model,
         contents=[prompt],
+        config={
+            "temperature": 0.2,
+            "response_mime_type": "application/json",
+            "response_schema": SCHEMA,
+        },
     )
 
     try:
@@ -105,7 +138,9 @@ def determine_course_suitability(discipline_name, discipline_topics, course_name
         start = text.find('{')
         end = text.rfind('}')
         parsed = json.loads(text[start:end+1])
+        ratio_covered = len(parsed.get("covered_topics", "").split(';')) / max(1, len(discipline_topics.split(';')))
+        parsed['ratio_covered_topics'] = ratio_covered
     except (json.JSONDecodeError, ValueError) as e:
         print("Failed to parse JSON:", e)
-        parsed = {"answer": "Ошибка", "explanation": "Не удалось распарсить ответ модели."}
-    return parsed.get('answer'), parsed.get('explanation')
+        parsed = {"answer": "Ошибка", "explanation": "Не удалось распарсить ответ модели.", "covered_topics": [], "missing_topics": []}
+    return parsed
