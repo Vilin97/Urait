@@ -23,8 +23,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 # ------------ Config ------------
-FLUSH_EVERY_SPECIALITIES = 3
-FLUSH_MIN_ROWS = 200
+FLUSH_EVERY_SPECIALITIES = 1
+FLUSH_MIN_ROWS = 100
 NUM_WORKERS = 4
 LOG_FILE = "pipeline.log"
 LOG_LEVEL = logging.INFO
