@@ -18,28 +18,63 @@ speciality_df = speciality_df[speciality_df['speciality_code'].str.strip().str.m
 speciality_df # 187 rows
 
 #%%
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
+# ------------ Config ------------
 FLUSH_EVERY_SPECIALITIES = 3
 FLUSH_MIN_ROWS = 200
 NUM_WORKERS = 4
+LOG_FILE = "pipeline.log"
+LOG_LEVEL = logging.INFO
+# --------------------------------
 
-def log(msg: str, speciality_code=None, speciality_name=None):
-    """Thread-safe log that prefixes the speciality if provided."""
-    if speciality_code is not None and speciality_name is not None:
-        tqdm.write(f"[{speciality_code} {speciality_name}] {msg}")
+# Console logging that plays nicely with tqdm
+class TqdmLoggingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+        except Exception:
+            self.handleError(record)
+
+# Set up logging: file + console (via tqdm)
+logger = logging.getLogger("pipeline")
+logger.setLevel(LOG_LEVEL)
+logger.handlers.clear()
+fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+fh.setFormatter(fmt)
+fh.setLevel(LOG_LEVEL)
+
+ch = TqdmLoggingHandler()
+ch.setFormatter(fmt)
+ch.setLevel(LOG_LEVEL)
+
+logger.addHandler(fh)
+logger.addHandler(ch)
+
+def log(msg, level="info", speciality_code=None, speciality_name=None):
+    prefix = f"[{speciality_code} {speciality_name}] " if speciality_code and speciality_name else ""
+    if level == "error":
+        logger.error(prefix + msg)
+    elif level == "warning":
+        logger.warning(prefix + msg)
     else:
-        tqdm.write(msg)
+        logger.info(prefix + msg)
 
 def process_speciality(speciality_code, speciality_name, num_study_plans, num_work_programs):
-    log("START", speciality_code, speciality_name)
+    log("START", speciality_code=speciality_code, speciality_name=speciality_name)
     local_rows = []
 
+    # 1) Study plans
     try:
         study_plan_urls = pipeline_utils.get_study_plan_urls(speciality_code, speciality_name)
     except Exception as e:
-        log(f"FAIL get_study_plan_urls: {e}", speciality_code, speciality_name)
+        log(f"FAIL get_study_plan_urls: {e}", level="error",
+            speciality_code=speciality_code, speciality_name=speciality_name)
         return local_rows
 
     used_study_plans = 0
@@ -51,12 +86,15 @@ def process_speciality(speciality_code, speciality_name, num_study_plans, num_wo
         try:
             discipline_names = pipeline_utils.extract_discipline_names(study_plan_url, speciality_name)
         except Exception as e:
-            log(f"FAIL extract_discipline_names url={study_plan_url}: {e}", speciality_code, speciality_name)
+            log(f"FAIL extract_discipline_names url={study_plan_url}: {e}", level="error",
+                speciality_code=speciality_code, speciality_name=speciality_name)
             continue
         if not discipline_names or discipline_names == ['None']:
-            log(f"No relevant disciplines in study_plan url={study_plan_url}", speciality_code, speciality_name)
+            log(f"No relevant disciplines in study_plan url={study_plan_url}",
+                speciality_code=speciality_code, speciality_name=speciality_name)
             continue
 
+        # 2) For each discipline → work programs (retry-until-success)
         for discipline_name in discipline_names:
             used_work_programs = 0
             try:
@@ -64,8 +102,8 @@ def process_speciality(speciality_code, speciality_name, num_study_plans, num_wo
                     discipline_name, speciality_code, speciality_name
                 )
             except Exception as e:
-                log(f"FAIL get_work_program_urls discipline='{discipline_name}': {e}",
-                    speciality_code, speciality_name)
+                log(f"FAIL get_work_program_urls discipline='{discipline_name}': {e}", level="error",
+                    speciality_code=speciality_code, speciality_name=speciality_name)
                 work_program_urls = []
 
             for work_program_url in work_program_urls:
@@ -74,12 +112,12 @@ def process_speciality(speciality_code, speciality_name, num_study_plans, num_wo
                 try:
                     topics = pipeline_utils.extract_topics(work_program_url, discipline_name)
                 except Exception as e:
-                    log(f"FAIL extract_topics url={work_program_url} discipline='{discipline_name}': {e}",
-                        speciality_code, speciality_name)
+                    log(f"FAIL extract_topics url={work_program_url} discipline='{discipline_name}': {e}", level="error",
+                        speciality_code=speciality_code, speciality_name=speciality_name)
                     continue
                 if not topics or topics == ['None']:
                     log(f"No topics url={work_program_url} discipline='{discipline_name}'",
-                        speciality_code, speciality_name)
+                        speciality_code=speciality_code, speciality_name=speciality_name)
                     continue
 
                 local_rows.append({
@@ -91,55 +129,55 @@ def process_speciality(speciality_code, speciality_name, num_study_plans, num_wo
                     "topics": "; ".join(topics),
                 })
                 used_work_programs += 1
-                plan_yielded = True
+                plan_yielded = True  # this study plan succeeded at least once
 
         if plan_yielded:
             used_study_plans += 1
 
-    log(f"DONE → {len(local_rows)} rows", speciality_code, speciality_name)
+    log(f"DONE → {len(local_rows)} rows", speciality_code=speciality_code, speciality_name=speciality_name)
     return local_rows
 
+def run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to_csv):
+    rows_buf, completed, total_written = [], 0, 0
 
-rows_buf, completed, total_written = [], 0, 0
-
-def flush_rows():
-    """Append and log how many rows were written."""
-    global rows_buf, total_written
-    if not rows_buf:
-        return
-    try:
-        n = len(rows_buf)
-        save_rows_to_csv(rows_buf)  # should append; header only if file doesn't exist
-        total_written += n
-        tqdm.write(f"[WRITE] +{n} rows (cumulative={total_written})")
-    except Exception as e:
-        tqdm.write(f"[WRITE-FAIL] Could not write {len(rows_buf)} rows: {e}")
-    finally:
-        rows_buf.clear()
-
-with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
-    futures = {
-        ex.submit(process_speciality, r['speciality_code'], r['speciality_name'],
-                  num_study_plans, num_work_programs): (r['speciality_code'], r['speciality_name'])
-        for _, r in speciality_df.iterrows()
-    }
-
-    for fut in tqdm(as_completed(futures), total=len(futures), desc="Specialities"):
-        scode, sname = futures[fut]
+    def flush_rows():
+        nonlocal rows_buf, total_written
+        if not rows_buf:
+            return
         try:
-            batch = fut.result()
+            n = len(rows_buf)
+            save_rows_to_csv(rows_buf)  # append mode; header only if file doesn't exist
+            total_written += n
+            logger.info(f"[WRITE] +{n} rows (cumulative={total_written})")
         except Exception as e:
-            log(f"FAIL speciality task: {e}", scode, sname)
-            batch = []
-        if batch:
-            rows_buf.extend(batch)
+            logger.error(f"[WRITE-FAIL] Could not write {len(rows_buf)} rows: {e}")
+        finally:
+            rows_buf.clear()
 
-        completed += 1
-        if completed % FLUSH_EVERY_SPECIALITIES == 0 or len(rows_buf) >= FLUSH_MIN_ROWS:
-            flush_rows()
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
+        futures = {
+            ex.submit(process_speciality, r['speciality_code'], r['speciality_name'],
+                      num_study_plans, num_work_programs): (r['speciality_code'], r['speciality_name'])
+            for _, r in speciality_df.iterrows()
+        }
 
-# final flush
-flush_rows()
-tqdm.write("[DONE] All specialities processed.")
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Specialities"):
+            scode, sname = futures[fut]
+            try:
+                batch = fut.result()
+            except Exception as e:
+                log(f"FAIL speciality task: {e}", level="error", speciality_code=scode, speciality_name=sname)
+                batch = []
+            if batch:
+                rows_buf.extend(batch)
+
+            completed += 1
+            if completed % FLUSH_EVERY_SPECIALITIES == 0 or len(rows_buf) >= FLUSH_MIN_ROWS:
+                flush_rows()
+
+    flush_rows()
+    logger.info("[DONE] All specialities processed.")
+
+run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to_csv)
 
 # %%
