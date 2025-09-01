@@ -9,7 +9,7 @@ import json
 DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_SUITABILITY_PROMPT = """Given the course title and topics, determine if this course can be used to teach the given discipline in a college course. The course might contain many topics, but as long as it covers most of the topics (>70%) of the discipline, it is acceptable. Respond in Russian with a short explanation."""
 
-def get_api_client(api_key_name="GOOGLE_API_KEY"):
+def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     """Make a genai client from an env var.
     
     TODO: switch to litellm for model interchangeability."""
