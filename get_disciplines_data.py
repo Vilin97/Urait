@@ -1,4 +1,4 @@
-
+"""Pipeline to extract disciplines and their topics from study plans and work programs."""
 #%%
 from tqdm import tqdm
 import pandas as pd
@@ -186,7 +186,7 @@ def run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to
     finally:
         # flush even on crash/KeyboardInterrupt
         flush_rows()
-        logger.info("[DONE] All specialities processed.")
+        logger.info(f"[DONE] All specialities processed. Total rows written: {total_written}")
 
 run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to_csv)
 

@@ -1,3 +1,5 @@
+"""Example of using the pipeline utilities on a single speciality and a single discipline."""
+
 #%%
 import pandas as pd
 import src.pipeline_utils as pipeline_utils

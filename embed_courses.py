@@ -1,3 +1,5 @@
+"""Embed courses from project_subjects.csv using Gemini embeddings and save to disk."""
+
 #%%
 import pandas as pd
 import numpy as np

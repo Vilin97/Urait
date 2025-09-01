@@ -1,3 +1,5 @@
+"""Demo Streamlit app for course-discipline matching."""
+
 # app.py
 import streamlit as st
 import pandas as pd
