@@ -3,10 +3,19 @@
 from tqdm import tqdm
 import pandas as pd
 import src.pipeline_utils as pipeline_utils
+import os
 
 def save_rows_to_csv(rows, filename="data/generated/disciplines.csv"):
-    df = pd.DataFrame(rows, columns=["speciality_code", "speciality_name", "study_plan_url", "discipline_name", "work_program_url", "topics"])
-    df.to_csv(filename, index=False, sep=';')
+    if not rows:
+        return
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    header = not os.path.exists(filename) or os.path.getsize(filename) == 0
+    df = pd.DataFrame(rows, columns=[
+        "speciality_code","speciality_name","study_plan_url",
+        "discipline_name","work_program_url","topics"
+    ])
+    # append; write header only once
+    df.to_csv(filename, index=False, sep=';', mode='a', header=header)
 
 num_study_plans = 1
 num_work_programs = 1
@@ -146,7 +155,7 @@ def run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to
             return
         try:
             n = len(rows_buf)
-            save_rows_to_csv(rows_buf)  # append mode; header only if file doesn't exist
+            save_rows_to_csv(rows_buf)
             total_written += n
             logger.info(f"[WRITE] +{n} rows (cumulative={total_written})")
         except Exception as e:
@@ -154,29 +163,30 @@ def run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to
         finally:
             rows_buf.clear()
 
-    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
-        futures = {
-            ex.submit(process_speciality, r['speciality_code'], r['speciality_name'],
-                      num_study_plans, num_work_programs): (r['speciality_code'], r['speciality_name'])
-            for _, r in speciality_df.iterrows()
-        }
+    try:
+        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
+            futures = {
+                ex.submit(process_speciality, r['speciality_code'], r['speciality_name'],
+                          num_study_plans, num_work_programs): (r['speciality_code'], r['speciality_name'])
+                for _, r in speciality_df.iterrows()
+            }
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="Specialities"):
+                scode, sname = futures[fut]
+                try:
+                    batch = fut.result()
+                except Exception as e:
+                    log(f"FAIL speciality task: {e}", level="error", speciality_code=scode, speciality_name=sname)
+                    batch = []
+                if batch:
+                    rows_buf.extend(batch)
 
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Specialities"):
-            scode, sname = futures[fut]
-            try:
-                batch = fut.result()
-            except Exception as e:
-                log(f"FAIL speciality task: {e}", level="error", speciality_code=scode, speciality_name=sname)
-                batch = []
-            if batch:
-                rows_buf.extend(batch)
-
-            completed += 1
-            if completed % FLUSH_EVERY_SPECIALITIES == 0 or len(rows_buf) >= FLUSH_MIN_ROWS:
-                flush_rows()
-
-    flush_rows()
-    logger.info("[DONE] All specialities processed.")
+                completed += 1
+                if completed % FLUSH_EVERY_SPECIALITIES == 0 or len(rows_buf) >= FLUSH_MIN_ROWS:
+                    flush_rows()
+    finally:
+        # flush even on crash/KeyboardInterrupt
+        flush_rows()
+        logger.info("[DONE] All specialities processed.")
 
 run_pipeline(speciality_df, num_study_plans, num_work_programs, save_rows_to_csv)
 
