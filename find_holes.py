@@ -29,33 +29,48 @@ from tqdm import tqdm
 # ------------ Config ------------
 LOG_FILE = "suitability.log"
 LOG_LEVEL = logging.INFO
-NUM_WORKERS = 6           # tune for API limits
+NUM_WORKERS = 5           # tune for API limits
 TOP_K = 10
 OUT_CSV = "data/generated/discipline_course_suitability.csv"
-FLUSH_EVERY = 1           # save after this many completed disciplines
 # --------------------------------
 
-# Logger
+# Logger (tqdm-friendly console + file)
 logger = logging.getLogger("suitability")
 logger.setLevel(LOG_LEVEL)
 logger.handlers.clear()
 fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-fh = logging.FileHandler(LOG_FILE, encoding="utf-8"); fh.setFormatter(fmt); fh.setLevel(LOG_LEVEL)
-ch = logging.StreamHandler(); ch.setFormatter(fmt); ch.setLevel(LOG_LEVEL)
-logger.addHandler(fh); logger.addHandler(ch)
+
+fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+fh.setFormatter(fmt)
+fh.setLevel(LOG_LEVEL)
+logger.addHandler(fh)
+
+class TqdmLoggingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+ch = TqdmLoggingHandler()
+ch.setFormatter(fmt)
+ch.setLevel(LOG_LEVEL)
+logger.addHandler(ch)
 
 # Ensure output dir
 os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
 
+# Precompute embeddings once
 course_embeddings = np.vstack(courses_df['embedding'])
 
 def process_discipline(i, row):
+    """Process one discipline; returns dict with index + results."""
     speciality_name = row['speciality_name']
     discipline_name = row['discipline_name']
     discipline_topics = row['topics']
     embedding = row['embedding']
 
-    logger.info(f"[{i}] Discipline: {discipline_name}")
+    logger.info(f"[{i}] [START] {discipline_name}, num_topics={len(discipline_topics.split(';'))}")
     try:
         ids, scores = utils.get_most_similar(embedding, course_embeddings, top_k=TOP_K)
     except Exception as e:
@@ -63,7 +78,7 @@ def process_discipline(i, row):
         return {"index": i, "top_courses": "[]", "is_covered": False, "coverage_ratio": 0.0}
 
     try:
-        client = utils.get_gemini_client()
+        client = utils.get_gemini_client()  # create per-thread unless known thread-safe
     except Exception as e:
         logger.error(f"[{i}] FAIL get_gemini_client: {e}")
         return {"index": i, "top_courses": "[]", "is_covered": False, "coverage_ratio": 0.0}
@@ -79,20 +94,25 @@ def process_discipline(i, row):
             answer = decision.get("answer", "Неизвестно")
             ratio = float(decision.get("ratio_covered_topics", 0.0))
             results.append({
-                "course_id": course_row['project_id'],
-                "course_name": course_row['project_name'],
+                "course_id": int(course_row['project_id']),  # force to Python int
+                "course_name": str(course_row['project_name']),
                 "score": float(score),
-                "answer": answer,
-                "explanation": decision.get("explanation", ""),
-                "covered_topics": decision.get("covered_topics", []),
-                "missing_topics": decision.get("missing_topics", []),
-                "ratio_covered_topics": ratio,
+                "answer": str(answer),
+                "explanation": str(decision.get("explanation", "")),
+                "covered_topics": str(decision.get("covered_topics", '')),
+                "missing_topics": str(decision.get("missing_topics", '')),
+                "ratio_covered_topics": float(ratio),
             })
+
             any_yes = any_yes or (answer == "Да")
             best_ratio = max(best_ratio, ratio)
+            logger.info(f"    [{i}] [COMPARE] score={score:.4f} | answer={answer+(' ' if answer=='Да' else '')} | ratio={ratio:.2f} | {course_row['project_name']}")
+            if any_yes:
+                break  # stop early if any suitable course is found
         except Exception as e:
             logger.error(f"[{i}] FAIL per-course check: {e}")
 
+    logger.info(f"[{i}] [DONE] {discipline_name} | any suitable: {any_yes}, best ratio: {best_ratio:.2f}")
     return {
         "index": i,
         "top_courses": json.dumps(results, ensure_ascii=False),
@@ -100,18 +120,20 @@ def process_discipline(i, row):
         "coverage_ratio": best_ratio,
     }
 
-# Prepare result columns to avoid SettingWithCopy surprises
+# Prepare result columns (stable defaults)
 results_df = disciplines_df.copy()
-for col in ["top_courses", "is_covered", "coverage_ratio"]:
-    if col not in results_df.columns:
-        results_df[col] = np.nan
+if "top_courses" not in results_df.columns: results_df["top_courses"] = ""
+if "is_covered"  not in results_df.columns: results_df["is_covered"]  = False
+if "coverage_ratio" not in results_df.columns: results_df["coverage_ratio"] = 0.0
 
-def flush_now():
+def flush_now(idx_list):
     try:
-        results_df.to_csv(OUT_CSV, index=False, sep=';')
-        logger.info(f"[WRITE] Snapshot saved to {OUT_CSV}")
+        to_save = results_df.loc[idx_list].drop(columns=['embedding'])
+        header = not os.path.exists(OUT_CSV) or os.path.getsize(OUT_CSV) == 0
+        to_save.to_csv(OUT_CSV, index=False, sep=';', mode='a', header=header)
+        logger.info(f"{idx_list} [WRITE] Appended {len(idx_list)} rows to {OUT_CSV}")
     except Exception as e:
-        logger.error(f"[WRITE-FAIL] Could not save snapshot: {e}")
+        logger.error(f"[WRITE-FAIL] Could not append rows: {e}")
 
 completed = 0
 futures = []
@@ -121,16 +143,20 @@ try:
             futures.append(ex.submit(process_discipline, i, row))
 
         for fut in tqdm(as_completed(futures), total=len(futures), desc="Suitability"):
-            res = fut.result()  # if a worker crashed, log and continue
+            try:
+                res = fut.result()
+            except Exception as e:
+                logger.error(f"[FUTURE-FAIL] [{i}] Discipline {row['discipline_name']} task crashed: {e}")
+                completed += 1
+                flush_now([i])
+                continue
+
             i = res["index"]
             results_df.at[i, 'top_courses'] = res["top_courses"]
             results_df.at[i, 'is_covered'] = res["is_covered"]
             results_df.at[i, 'coverage_ratio'] = res["coverage_ratio"]
 
             completed += 1
-            if completed % FLUSH_EVERY == 0:
-                flush_now()
+            flush_now([i])
 finally:
-    # final flush (also runs on exceptions / KeyboardInterrupt)
-    flush_now()
     logger.info(f"[DONE] Processed {completed} disciplines total.")
