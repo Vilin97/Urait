@@ -18,6 +18,7 @@ def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     client = genai.Client(api_key=api_key)
     return client
 
+### Document parsing utilities ###
 def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL):
     """Helper to fetch URL content and generate response from it."""
     doc_data = httpx.get(url).content
@@ -45,6 +46,7 @@ def parse_document(url, prompt, client, model=DEFAULT_MODEL):
     else:
         raise ValueError("Unsupported document type. Only PDF and HTML are supported.")
 
+### Embedding-related utilities ###
 def embed_text(text, client, model="gemini-embedding-001", output_dimensionality=768):
     """Embed text using the specified embedding model."""
     response = client.models.embed_content(
@@ -76,6 +78,7 @@ def get_most_similar(embedding, embeddings_by_id, top_k=5):
     top_sims = [sims[i] for i in top_indices]
     return list(zip(top_ids, top_sims))
 
+### Course-discipline suitability determination ###
 def determine_course_suitability(discipline_name, discipline_topics, course_name, course_topics, client, model=DEFAULT_MODEL, main_prompt=DEFAULT_SUITABILITY_PROMPT):
     """Determine if a course is suitable for teaching a discipline based on topics."""
 
