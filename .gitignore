@@ -3,5 +3,5 @@
 *.npz
 *.pyc
 *.log
-*.png
+# *.png
 *.jpg
