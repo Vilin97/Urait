@@ -1,9 +1,11 @@
 """For each discipline, find top k most similar courses by embedding similarity, and determine suitability."""
 
 #%%
-import pandas as pd
 import json
+import logging, json, os
 import numpy as np
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import src.utils as utils
 
@@ -20,12 +22,6 @@ courses_df['embedding'] = courses_df['embedding'].apply(lambda s: np.array(json.
 courses_df
 
 #%%
-import logging, json, os
-import numpy as np
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
-
 # ------------ Config ------------
 LOG_FILE = "suitability.log"
 LOG_LEVEL = logging.INFO

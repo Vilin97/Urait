@@ -1,5 +1,6 @@
-pandas
 numpy
-google-genai
+pandas
+tqdm
 httpx
 python-dotenv
+google-genai

@@ -1,9 +1,11 @@
 """Pipeline to extract disciplines and their topics from study plans and work programs."""
 #%%
-from tqdm import tqdm
 import pandas as pd
-import src.pipeline_utils as pipeline_utils
 import os
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+import src.pipeline_utils as pipeline_utils
 
 def save_rows_to_csv(rows, filename="data/generated/disciplines.csv"):
     if not rows:
@@ -27,10 +29,6 @@ speciality_df = speciality_df[speciality_df['speciality_code'].str.strip().str.m
 speciality_df # 187 rows
 
 #%%
-import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
-
 # ------------ Config ------------
 FLUSH_EVERY_SPECIALITIES = 1
 FLUSH_MIN_ROWS = 100

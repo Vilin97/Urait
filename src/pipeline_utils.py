@@ -1,6 +1,5 @@
 import src.google_search as google_search
 import src.utils as utils
-import pandas as pd
 
 def get_study_plan_urls(speciality_code, speciality_name):
     """Get URLs of study plans for a given speciality"""
