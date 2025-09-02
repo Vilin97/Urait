@@ -138,7 +138,9 @@ def determine_course_suitability(speciality, discipline_name, discipline_topics,
         start = text.find('{')
         end = text.rfind('}')
         parsed = json.loads(text[start:end+1])
-        ratio_covered = len(parsed.get("covered_topics", "").split(';')) / max(1, len(discipline_topics.split(';')))
+        num_covered = len(parsed.get("covered_topics", "").split(';'))
+        num_missing = len(parsed.get("missing_topics", "").split(';'))
+        ratio_covered = num_covered / (num_covered + num_missing) if (num_covered + num_missing) > 0 else 0.0
         parsed['ratio_covered_topics'] = ratio_covered
     except (json.JSONDecodeError, ValueError) as e:
         print("Failed to parse JSON:", e)
