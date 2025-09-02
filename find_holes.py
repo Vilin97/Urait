@@ -116,43 +116,6 @@ def process_discipline(i, row):
         "coverage_ratio": best_ratio,
     }
 
-# Prepare result columns (stable defaults)
-results_df = disciplines_df.copy()
-if "top_courses" not in results_df.columns: results_df["top_courses"] = ""
-if "is_covered"  not in results_df.columns: results_df["is_covered"]  = False
-if "coverage_ratio" not in results_df.columns: results_df["coverage_ratio"] = 0.0
-
-# Load previously processed disciplines from OUT_CSV and mark them to be skipped.
-processed_keys = set()
-if os.path.exists(OUT_CSV) and os.path.getsize(OUT_CSV) > 0:
-    try:
-        processed_df = pd.read_csv(OUT_CSV, sep=';')
-        if {'speciality_name', 'discipline_name'}.issubset(processed_df.columns):
-            processed_map = {}
-            for _, prow in processed_df.iterrows():
-                key = (prow['speciality_name'], prow['discipline_name'])
-                if key not in processed_map:
-                    processed_map[key] = prow
-                    processed_keys.add(key)
-            # Populate results_df so saved rows are reflected and won't be reprocessed
-            for i, row in results_df.iterrows():
-                key = (row['speciality_name'], row['discipline_name'])
-                if key in processed_map:
-                    prow = processed_map[key]
-                    results_df.at[i, 'top_courses'] = prow.get('top_courses', "")
-                    # Ensure booleans and floats are converted properly
-                    results_df.at[i, 'is_covered'] = bool(prow.get('is_covered', False))
-                    try:
-                        results_df.at[i, 'coverage_ratio'] = float(prow.get('coverage_ratio', 0.0))
-                    except Exception:
-                        results_df.at[i, 'coverage_ratio'] = 0.0
-        else:
-            logger.info(f"{OUT_CSV} exists but is missing speciality_name/discipline_name columns; skipping disabled.")
-    except Exception as e:
-        logger.error(f"Failed to read existing {OUT_CSV}: {e}")
-
-logger.info(f"Found {len(processed_keys)} already processed disciplines; they will be skipped.")
-
 def flush_now(idx_list):
     try:
         to_save = results_df.loc[idx_list].drop(columns=['embedding'])
@@ -162,6 +125,20 @@ def flush_now(idx_list):
     except Exception as e:
         logger.error(f"[WRITE-FAIL] Could not append rows: {e}")
 
+# Prepare result columns (stable defaults)
+results_df = disciplines_df.copy()
+if "top_courses" not in results_df.columns: results_df["top_courses"] = ""
+if "is_covered"  not in results_df.columns: results_df["is_covered"]  = False
+if "coverage_ratio" not in results_df.columns: results_df["coverage_ratio"] = 0.0
+
+# Load previously processed (speciality_name, discipline_name) pairs and skip them.
+processed_keys = set()
+if os.path.exists(OUT_CSV) and os.path.getsize(OUT_CSV) > 0:
+    prev = pd.read_csv(OUT_CSV, sep=';')
+    processed_keys = set(zip(prev['speciality_name'], prev['discipline_name']))
+logger.info(f"Found {len(processed_keys)} already processed disciplines; they will be skipped.")
+
+# Process all disciplines with a thread pool
 completed = 0
 futures = []
 try:
@@ -169,7 +146,6 @@ try:
         for i, row in results_df.iterrows():
             key = (row['speciality_name'], row['discipline_name'])
             if key in processed_keys:
-                logger.info(f"Skipping [{i}] {row['discipline_name']} (already processed)")
                 continue
             futures.append(ex.submit(process_discipline, i, row))
 
