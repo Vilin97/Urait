@@ -25,7 +25,7 @@ courses_df
 # ------------ Config ------------
 LOG_FILE = "suitability.log"
 LOG_LEVEL = logging.INFO
-NUM_WORKERS = 5           # tune for API limits
+NUM_WORKERS = 4           # tune for API limits
 TOP_K = 10
 OUT_CSV = "data/generated/discipline_course_suitability.csv"
 # --------------------------------
