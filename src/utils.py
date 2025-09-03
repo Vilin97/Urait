@@ -9,7 +9,8 @@ import json
 DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
-DEFAULT_THINKING_BUDGET = 0
+DEFAULT_THINKING_BUDGET = 512
+DEFAULT_MAX_INPUT_TOKENS = 400_000
 
 def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     """Make a genai client from an env var.
@@ -21,9 +22,21 @@ def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     return client
 
 ### Document parsing utilities ###
-def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL, temperature=DEFAULT_TEMPERATURE, thinking_budget=DEFAULT_THINKING_BUDGET, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS):
-    """Helper to fetch URL content and generate response from it."""
-    doc_data = httpx.get(url).content
+def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL, temperature=DEFAULT_TEMPERATURE, thinking_budget=DEFAULT_THINKING_BUDGET, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_input_tokens=DEFAULT_MAX_INPUT_TOKENS):
+    """Helper to fetch URL content and generate response from it.
+    Raises ValueError if the fetched document exceeds max_input_tokens (counted via client.models.count_tokens)."""
+    resp = httpx.get(url)
+    resp.raise_for_status()
+    doc_data = resp.content
+
+    token_count = client.models.count_tokens(
+        model=model,
+        contents=[types.Part.from_bytes(data=doc_data, mime_type=mime_type)],
+    ).total_tokens
+
+    if token_count > max_input_tokens:
+        raise ValueError(f"Document token count {token_count} exceeds max_input_tokens limit of {max_input_tokens}.")
+
     response = client.models.generate_content(
         model=model,
         contents=[

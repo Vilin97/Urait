@@ -2,6 +2,7 @@ import requests
 import json
 from dotenv import load_dotenv
 import os
+import time
 
 def parse_serper_response(response):
     """
@@ -48,6 +49,7 @@ def _google_search(query):
     return response
 
 def search(query):
+    time.sleep(0.1) # rate limiting
     response = _google_search(query)
     search_results = parse_serper_response(response)
     return search_results
