@@ -1,11 +1,11 @@
 import src.google_search as google_search
 import src.utils as utils
 
-def get_study_plan_urls(speciality_code, speciality_name):
+def get_study_plan_urls(speciality_code, speciality_name, university_name):
     """Get URLs of study plans for a given speciality"""
-    query = f"Направление подготовки {speciality_code} {speciality_name} \"учебный план\" pdf"
+    query = f"Направление подготовки {speciality_code} {speciality_name} \"учебный план\" {university_name}"
     search_results = google_search.search(query)
-    study_plan_urls = [r.get('url') for r in search_results if r.get('title').startswith('[PDF]') and r.get('url').endswith('.pdf')]
+    study_plan_urls = [r.get('url') for r in search_results]
     return study_plan_urls
 
 def extract_discipline_names(study_plan_url, speciality_name):
@@ -27,11 +27,11 @@ def extract_discipline_names(study_plan_url, speciality_name):
     discipline_names = parsed.split('; ')
     return discipline_names
 
-def get_work_program_urls(discipline_name, speciality_code, speciality_name):
+def get_work_program_urls(discipline_name, speciality_code, speciality_name, university_name):
     """Get URLs of work programs"""
-    query = f"\"{discipline_name}\" рабочая программа дисциплины {speciality_code} {speciality_name} pdf"
+    query = f"\"{discipline_name}\" рабочая программа дисциплины {speciality_code} {speciality_name} {university_name}"
     search_results = google_search.search(query)
-    work_program_urls = [r.get('url') for r in search_results if r.get('title').startswith('[PDF]') and r.get('url').endswith('.pdf')]
+    work_program_urls = [r.get('url') for r in search_results]
     return work_program_urls
 
 def extract_topics(work_program_url, discipline_name):
