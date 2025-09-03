@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 import json
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+DEFAULT_THINKING_BUDGET = 0
 
 def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     """Make a genai client from an env var.
@@ -18,7 +21,7 @@ def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
     return client
 
 ### Document parsing utilities ###
-def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL):
+def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL, temperature=DEFAULT_TEMPERATURE, thinking_budget=DEFAULT_THINKING_BUDGET, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS):
     """Helper to fetch URL content and generate response from it."""
     doc_data = httpx.get(url).content
     response = client.models.generate_content(
@@ -27,6 +30,7 @@ def _generate_from_url(url, prompt, mime_type, client, model=DEFAULT_MODEL):
             types.Part.from_bytes(data=doc_data, mime_type=mime_type),
             prompt,
         ],
+        config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_output_tokens, thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget)),
     )
     return response.text
 
@@ -42,8 +46,8 @@ def parse_document(url, prompt, client, model=DEFAULT_MODEL):
         return parse_pdf(url, prompt, client, model=model)
     elif url.endswith(".html"):
         return parse_html(url, prompt, client, model=model)
-    else:
-        raise ValueError("Unsupported document type. Only PDF and HTML are supported.")
+    else: # still try HTML for other URLs
+        return parse_html(url, prompt, client, model=model)
 
 ### Embedding-related utilities ###
 def embed_text(text, client, model="gemini-embedding-001", output_dimensionality=768):
