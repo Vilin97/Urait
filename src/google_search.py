@@ -48,8 +48,8 @@ def _google_search(query):
     response = requests.request("POST", url, headers=headers, data=payload)
     return response
 
-def search(query):
-    time.sleep(0.1) # rate limiting
+def search(query, rate_limit=0.1):
+    time.sleep(rate_limit)
     response = _google_search(query)
     search_results = parse_serper_response(response)
     return search_results
