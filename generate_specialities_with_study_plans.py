@@ -62,52 +62,64 @@ def save_rows_to_csv(rows, filename=OUTPUT_CSV):
 speciality_df = pd.read_csv("data/download/specialities.csv", sep=';')
 speciality_df = speciality_df[speciality_df['speciality_code'].astype(str).str.strip().str.match(r'^\d{2}\.03\.\d{2}$', na=False)]
 
-university_df = pd.read_csv("data/download/selected_universities.csv")
-university_df.rename(columns={'speciality': 'speciality_name', 'vuz': 'university'}, inplace=True)
-university_df = (
-    university_df
-    .dropna(subset=['speciality_name', 'university'])
-    [['speciality_name', 'university']]
-    .drop_duplicates()
-)
+university_df = pd.read_csv("data/generated/universities.csv")
 
-speciality_df = speciality_df.merge(university_df, on='speciality_name', how='inner')
-speciality_df = speciality_df[['speciality_code', 'speciality_name', 'university']]
-speciality_df = speciality_df
-print(speciality_df.head())
+def extract_url_root(url: str) -> str:
+    """
+    Extracts the root name from a university URL.
+    Example:
+        https://www.muctr.ru/ -> 'muctr'
+        http://www.sibsau.ru/page/home/ -> 'sibsau'
+    """
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    # take only the first part of the domain before the first dot
+    root = netloc.split(".")[0]
+    return root
+
+university_df['url_root'] = university_df['university_url'].apply(extract_url_root)
 
 #%% Per-row processing
 def process_speciality_row(row):
     scode = row['speciality_code']
     sname = row['speciality_name']
-    uni = row['university']
     local_rows = []
 
     idx = row.name
-    log(f"[START] [{idx}]", speciality_name=sname, university=uni)
+    log(f"[START] [{idx}]", speciality_name=sname)
     try:
-        study_plan_urls = pipeline_utils.get_study_plan_urls(scode, sname, uni)
+        study_plan_urls = pipeline_utils.get_study_plan_urls(scode, sname)
     except Exception as e:
-        log(f"FAIL get_study_plan_urls: {e}", level="error", speciality_name=sname, university=uni)
+        log(f"FAIL get_study_plan_urls: {e}", level="error", speciality_name=sname)
         return local_rows
 
-    log(f"        [{idx}] Found {len(study_plan_urls)} study plan URLs", speciality_name=sname, university=uni)
+    log(f"        [{idx}] Found {len(study_plan_urls)} study plan URLs", speciality_name=sname)
     used = 0
     for url in study_plan_urls:
         if used >= NUM_STUDY_PLANS:
             break
         try:
             disciplines = pipeline_utils.extract_discipline_names(url, sname) or []
-            log(f"            [{idx}] Extracted {len(disciplines)} disciplines from {url}", speciality_name=sname, university=uni)
+            log(f"            [{idx}] Extracted {len(disciplines)} disciplines from {url}", speciality_name=sname)
         except Exception as e:
-            # log(f"            [{idx}] FAIL extract_discipline_names url={url}: {e}", level="error", speciality_name=sname, university=uni)
+            log(f"            [{idx}] FAIL extract_discipline_names url={url}: {e}", level="error", speciality_name=sname)
             continue
 
         # normalize and filter
         disciplines = [d.strip() for d in disciplines if d and d.strip().lower() != 'none']
         if not disciplines or len(disciplines) <= 1:
-            log(f"            [{idx}] No relevant disciplines in study_plan url={url}", speciality_name=sname, university=uni)
+            log(f"            [{idx}] No relevant disciplines in study_plan url={url}", speciality_name=sname)
             continue
+        # Find matching university
+        uni = "Unknown"
+        for _, urow in university_df.iterrows():
+            if re.search(rf'\b{re.escape(urow["url_root"])}\b', url, re.IGNORECASE):
+                uni = urow['university_name']
+                break
+        if uni == "Unknown":
+            log(f"No matching university found for study_plan url={url}", level="warning", speciality_name=sname, university=uni)
 
         local_rows.append({
             "speciality_code": scode,
@@ -118,9 +130,9 @@ def process_speciality_row(row):
         })
         used += 1
     if used < NUM_STUDY_PLANS:
-        log(f"            [{idx}] Could not find any study plans", speciality_name=sname, university=uni)
+        log(f"            [{idx}] Could not find any study plans", speciality_name=sname)
 
-    log(f"[DONE]  [{idx}] → {len(local_rows)} rows", speciality_name=sname, university=uni)
+    log(f"[DONE]  [{idx}] → {len(local_rows)} rows", speciality_name=sname)
     return local_rows
 
 #%% Orchestration
@@ -152,7 +164,7 @@ def run_pipeline(df):
                 try:
                     batch = fut.result()
                 except Exception as e:
-                    log(f"FAIL speciality task: {e}", level="error", speciality_name=sname, university=uni)
+                    log(f"FAIL speciality task: {e}", level="error", speciality_name=sname)
                     batch = []
                 if batch:
                     rows_buf.extend(batch)
