@@ -1,20 +1,30 @@
 # Urait course matching
 
+## Поиск новинок
+- Какие дисциплины преподаются? (50% done)
+- Какие из них не закрыты курсами Юрайт? (50% done)
+- Как закрыть эти дыры? (0% done)
+
 ## Pipeline description
 
-to answer the question "what courses does Urait have for a given university specialization?" we:
+To answer the question "what courses does Urait have for a given university specialization?" we:
 
-- parse the disciplines from the university URL
-- generate topics for each discipline using Gemini
-- find 5 most similar courses by cosine similarity using Gemini embeddings
-- ask Gemini if any of these courses can be used to teach the discipline
+- search for the study plans (учебные планы) for the specialization, via google search
+- parse the disciplines from the study plan page, using Gemini 2.5 Flash
+- search for work programs (рабочие программы дисциплин) for each discipline
+- parse the topics from the work program page, using Gemini 2.5 Flash
+- embed the topics using Gemini embeddings
+- embed the Urait courses using Gemini embeddings
+- match the topics to the courses using cosine similarity
+- for top 5 course matches, use Gemini 2.5 Flash to decide whether the course can be used to teach the discipline
 
-The reason for generating topics is for better matching, since the discipline name alone might be not enough for good embeddings. The reason for asking Gemini about the top 5 courses is that cosine similarity might not be perfect, and we want to give Gemini a chance to choose the best course itself.
+## Plans
+- match the study plans to the universities they came from, using the urls
+- get ~10-100 study plans per specialization, to approximate the popularity of the disciplines
+- use the popularity to sort the holes -- disciplines without matching courses
 
 ## How to run
 
-0. Run `pip install -r requirements.txt`
-1. download `project_subjects.csv` from [drive](https://drive.google.com/drive/folders/16_rbQxV5SVpZemgS0NN0-Odo4ORpZXfv).
-2. make a `.env` file with `GOOGLE_API_KEY=your_key`.
-3. run `embed_courses.py` to create the course embeddings.
-4. run `parse_disciplines.py` to parse disciplines from the university URL and decide whether there is a course that can be used to teach it.
+1. run `pip install -r requirements.txt`
+2. download `project_subjects.csv` from [drive](https://drive.google.com/drive/folders/16_rbQxV5SVpZemgS0NN0-Odo4ORpZXfv).
+3. make a `.env` file with `GOOGLE_API_KEY=your_key` and `SERPER_API_KEY=your_key`.
