@@ -4,3 +4,4 @@ tqdm
 httpx
 python-dotenv
 google-genai
+tldextract

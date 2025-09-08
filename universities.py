@@ -2,61 +2,9 @@
 import src.google_search as google_search
 import pandas as pd
 from tqdm import tqdm
-import seaborn as sns
 
 #%%
 universities_df = pd.read_csv('data/download/partners.csv')
-
-#%%
-import matplotlib.pyplot as plt
-
-# ensure numeric columns and drop invalid rows
-plot_df = universities_df.copy()
-plot_df['students_amount'] = pd.to_numeric(plot_df['students_amount'], errors='coerce')
-plot_df['teachers_amount'] = pd.to_numeric(plot_df['teachers_amount'], errors='coerce')
-plot_df = plot_df.dropna(subset=['students_amount', 'teachers_amount'])
-
-# scatter plot
-plt.figure(figsize=(8, 6))
-sns.scatterplot(data=plot_df, x='students_amount', y='teachers_amount', s=20)
-plt.xscale('log')
-plt.yscale('log')
-plt.xlabel('Количество студентов')
-plt.ylabel('Количество преподавателей')
-plt.title('Соотношение студентов и преподавателей в университетах')
-plt.grid(alpha=0.3)
-
-# annotate a few largest universities by students
-labeled = set()
-for _, r in plot_df.nlargest(9, 'students_amount').iterrows():
-    label = r.get('abbreviation') or r.get('name') or ''
-    plt.text(r['students_amount'], r['teachers_amount'], label, fontsize=6)
-    labeled.add(r.name)
-
-# compute teacher-to-student ratio and annotate lowest/highest 5
-plot_df = plot_df[(plot_df['students_amount'] > 100) & (plot_df['teachers_amount'] > 5)].copy()
-plot_df['ratio'] = plot_df['teachers_amount'] / plot_df['students_amount']
-
-# annotate 5 universities with lowest ratio (few teachers per student)
-for _, r in plot_df.nsmallest(5, 'ratio').iterrows():
-    if r.name in labeled:
-        continue
-    label = r.get('abbreviation') or r.get('name') or ''
-    plt.text(r['students_amount'] * 1.05, r['teachers_amount'] * 1.05, label, fontsize=6, color='red')
-    labeled.add(r.name)
-
-# annotate 5 universities with highest ratio (many teachers per student)
-for _, r in plot_df.nlargest(5, 'ratio').iterrows():
-    if r.name in labeled:
-        continue
-    label = r.get('abbreviation') or r.get('name') or ''
-    plt.text(r['students_amount'] * 1.05, r['teachers_amount'] * 1.05, label, fontsize=6, color='red')
-    labeled.add(r.name)
-
-plt.tight_layout()
-plt.show()
-
-#%%
 # find university websites
 urls = []
 for (i, row) in tqdm(universities_df.iterrows(), total=len(universities_df)):
@@ -78,13 +26,13 @@ universities_df.to_csv('data/generated/universities.csv', index=False)
 
 #%%
 universities_df = pd.read_csv("data/generated/universities.csv")
-print(len(universities_df))
+print(f"Loaded {len(universities_df)} rows.")
 # ensure students_amount and teachers_amount are ints, convert NaNs to 0, drop rows where either is 0
 for col in ['students_amount', 'teachers_amount']:
     universities_df[col] = pd.to_numeric(universities_df[col], errors='coerce').fillna(0).astype(int)
 
 universities_df = universities_df[(universities_df['students_amount'] >= 100) & (universities_df['teachers_amount'] >= 10)].copy().reset_index(drop=True)
-print(len(universities_df))
+print(f"After filtering small universities, {len(universities_df)} rows remain.")
 
 #%%
 # merge rows with exactly the same name: sum students/teachers, keep abbreviation and url from row with most students
@@ -122,14 +70,13 @@ import tldextract
 
 HOST_DROP_ETLD1 = {
     "wikipedia.org", "vk.com", "facebook.com", "instagram.com", "ok.ru", "yandex.ru",
-    "youtube.com", "t.me", "vuzopedia.ru", "postupi.online", "universitys.ru", "ucheba.ru", "ivobr.ru", "ciur.ru"
+    "youtube.com", "t.me", "vuzopedia.ru", "postupi.online", "universitys.ru", "ucheba.ru", "ivobr.ru", "ciur.ru", "robogeek.ru", "cdnstatic.rg.ru", "tabiturient.ru", "vuzopedia.ru", "abiturient.ru", "vuzopedia.ru", "studopedia.ru", "studfile.net", "studbooks.net", "studme.org", "studref.com", "referat911.ru", "referat.guru", "allbest.ru", "znanium.com", "libgen.is", "libgen.rs", "libgen.li", "e-lib.info", "academia.edu", "researchgate.net", "akkork.ru", "i-exam.ru", "minobr63.ru", "mskobr.ru", "dagestanschool.ru"
 }
-COLLAPSE_PREFIXES = {"www", "en", "ru", "pk", "abitur", "priem", "admission", "admit", "new"}
+COLLAPSE_PREFIXES = {"en", "ru", "pk", "abitur", "priem", "admission", "admit", "new"}
 SSUZ_HINTS = ("college", "kolled", "tehnik", "tehnic", "lyceum", "ssuz", "spo", "tekhnikum")
 
 def clean_url_one(u: str,
                   drop_ssuz: bool = False,
-                  drop_k12: bool = False,
                   collapse_lang_adm: bool = True) -> str | None:
     if not u:
         return None
@@ -137,8 +84,6 @@ def clean_url_one(u: str,
     host = (s.netloc or s.path).split("/")[0].lower()
     if not host or host.startswith(("mailto:", "javascript:")):
         return None
-    if host.startswith("www."):
-        host = host[4:]
     host = host.split(":", 1)[0]
 
     # IDN → punycode (canonical)
@@ -163,14 +108,17 @@ def clean_url_one(u: str,
     # Optional filters
     if drop_ssuz and any(h in host for h in SSUZ_HINTS):
         return None
-    if drop_k12 and (".mskobr.ru" in host or host.endswith(".eduru.ru") or ".obr." in host):
-        return None
 
     # Collapse language/admissions subdomains (but keep institutional subs like academy.customs.gov.ru)
     if collapse_lang_adm and sub in COLLAPSE_PREFIXES:
         host = etld1
 
-    return f"https://{host}/"
+    # preserve original http if present, otherwise default to https
+    scheme = s.scheme.lower()
+    if scheme != "http":
+        scheme = "https"
+
+    return f"{scheme}://{host}/"
 
 assert clean_url_one("https://bsuedu.ru/") == "https://bsuedu.ru/"
 assert clean_url_one("https://sfedu.ru/")  == "https://sfedu.ru/"
@@ -182,9 +130,6 @@ assert clean_url_one("https://ru.wikipedia.org/...",) is None
 assert clean_url_one("https://pk.aumsu.ru/").endswith("aumsu.ru/")
 assert clean_url_one("https://abitur.penzgtu.ru/").endswith("penzgtu.ru/")
 assert clean_url_one("https://academy.customs.gov.ru/") == "https://academy.customs.gov.ru/"
-
-# Optional K-12 drop
-assert clean_url_one("https://madk.mskobr.ru/", drop_k12=True) is None
 
 universities_df['clean_url'] = universities_df['url'].apply(lambda u: clean_url_one(u, drop_ssuz=False))
 
@@ -225,4 +170,56 @@ if (counts > 1).any():
     print(dup_rows[display_cols].to_string(index=False))
 
 #%%
+before = len(universities_df)
+mask = universities_df['clean_url'].notna() & (universities_df['clean_url'].astype(str).str.strip() != "")
+universities_df = universities_df[mask].copy().reset_index(drop=True)
+after = len(universities_df)
+print(f"Dropped {before - after} rows without clean_url; {after} rows remain.")
+
+#%%
+import src.url_utils as url_utils
+universities_df['url_root'] = universities_df['clean_url'].apply(lambda u: url_utils.extract_root(u) if pd.notna(u) else None)
+print(f"After extracting url_root, {universities_df['url_root'].notna().sum()} / {len(universities_df)} universities have a valid url_root.")
+print(f"Unique url_root values: {universities_df['url_root'].nunique()}")
+
+#%%
+# show duplicate url_root values and affected rows, then keep only the university with most students per root
+root_series = universities_df['url_root'].dropna()
+counts = root_series.value_counts()
+dup_roots = counts[counts > 1].index.tolist()
+
+print(f"Total rows with url_root: {len(root_series)}")
+print(f"Unique url_root values: {len(counts)}")
+print(f"Duplicate url_root values: {len(dup_roots)} (affecting {int(counts[counts > 1].sum())} rows)")
+
+if dup_roots:
+    dup_rows = universities_df[universities_df['url_root'].isin(dup_roots)].sort_values(['url_root', 'name'])
+    display_cols = ['url_root', 'name', 'abbreviation', 'students_amount', 'teachers_amount', 'url']
+    # print(dup_rows[display_cols].to_string(index=False))
+
+    # For each duplicated root, keep only the row with the most students; set others' url_root to None
+    affected = 0
+    for root in dup_roots:
+        group_idx = universities_df[universities_df['url_root'] == root].index.tolist()
+        keep_idx = universities_df.loc[group_idx, 'students_amount'].idxmax()
+        drop_idx = [i for i in group_idx if i != keep_idx]
+        if drop_idx:
+            universities_df.loc[drop_idx, 'url_root'] = None
+            affected += len(drop_idx)
+
+    print(f"Set url_root=None for {affected} duplicate rows (kept the university with most students per root).")
+
+    # show any remaining duplicates (should be none)
+    root_series = universities_df['url_root'].dropna()
+    counts = root_series.value_counts()
+    remaining_dup_roots = counts[counts > 1].index.tolist()
+    print(f"Remaining duplicate url_root groups: {len(remaining_dup_roots)}")
+    if remaining_dup_roots:
+        dup_rows = universities_df[universities_df['url_root'].isin(remaining_dup_roots)].sort_values(['url_root', 'name'])
+        print(dup_rows[display_cols].to_string(index=False))
+else:
+    print("No duplicate url_root values found.")
+
+#%%
 universities_df.to_csv('data/generated/universities_cleaned.csv', index=False)
+# %%
