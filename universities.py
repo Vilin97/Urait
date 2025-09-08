@@ -177,6 +177,7 @@ after = len(universities_df)
 print(f"Dropped {before - after} rows without clean_url; {after} rows remain.")
 
 #%%
+# extract url_root from clean_url
 import src.url_utils as url_utils
 universities_df['url_root'] = universities_df['clean_url'].apply(lambda u: url_utils.extract_root(u) if pd.notna(u) else None)
 print(f"After extracting url_root, {universities_df['url_root'].notna().sum()} / {len(universities_df)} universities have a valid url_root.")

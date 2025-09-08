@@ -13,9 +13,7 @@ DEFAULT_THINKING_BUDGET = 512
 DEFAULT_MAX_INPUT_TOKENS = 400_000
 
 def get_gemini_client(api_key_name="GOOGLE_API_KEY"):
-    """Make a genai client from an env var.
-    
-    TODO: switch to litellm for model interchangeability."""
+    """Make a genai client from an env var."""
     load_dotenv()
     api_key = os.getenv(api_key_name)
     client = genai.Client(api_key=api_key)

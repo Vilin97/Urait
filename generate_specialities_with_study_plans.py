@@ -1,27 +1,28 @@
 #%% Imports
 import os
-import re
 import logging
 import pandas as pd
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import src.pipeline_utils as pipeline_utils
+import src.url_utils as url_utils
 
 #%% Config
-OUTPUT_CSV = "data/generated/specialities_with_study_plans.csv"
-NUM_STUDY_PLANS = 1
+OUTPUT_CSV = "data/generated/study_plans.csv"
+NUM_STUDY_PLANS = 50
 NUM_WORKERS = 4
-FLUSH_MIN_ROWS = 20
+FLUSH_MIN_ROWS = 5
 LOG_FILE = "pipeline_study_plans.log"
 LOG_LEVEL = logging.INFO
 
 #%% Logging (console-friendly with tqdm)
 class TqdmLoggingHandler(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
     def emit(self, record):
         try:
-            msg = self.format(record)
-            tqdm.write(msg)
+            tqdm.write(self.format(record))
         except Exception:
             self.handleError(record)
 
@@ -40,10 +41,10 @@ ch.setLevel(LOG_LEVEL)
 
 logger.addHandler(fh)
 logger.addHandler(ch)
+logger.propagate = False  # avoid double-printing via root
 
-def log(msg, level="info", speciality_name='', university=''):
-    university_short = university.split(' ')[0]
-    to_log = f"{msg} | {speciality_name} | {university_short}"
+def log(msg, level="info", speciality_name=""):
+    to_log = f"{msg} | {speciality_name}"
     (logger.error if level == "error" else logger.warning if level == "warning" else logger.info)(to_log)
 
 #%% IO helpers
@@ -60,26 +61,11 @@ def save_rows_to_csv(rows, filename=OUTPUT_CSV):
 
 #%% Load and prepare speciality + university pairs
 speciality_df = pd.read_csv("data/download/specialities.csv", sep=';')
-speciality_df = speciality_df[speciality_df['speciality_code'].astype(str).str.strip().str.match(r'^\d{2}\.03\.\d{2}$', na=False)]
+speciality_df = speciality_df[
+    speciality_df['speciality_code'].astype(str).str.strip().str.match(r'^\d{2}\.03\.\d{2}$', na=False)
+]
 
-university_df = pd.read_csv("data/generated/universities.csv")
-
-def extract_url_root(url: str) -> str:
-    """
-    Extracts the root name from a university URL.
-    Example:
-        https://www.muctr.ru/ -> 'muctr'
-        http://www.sibsau.ru/page/home/ -> 'sibsau'
-    """
-    parsed = urlparse(url)
-    netloc = parsed.netloc.lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    # take only the first part of the domain before the first dot
-    root = netloc.split(".")[0]
-    return root
-
-university_df['url_root'] = university_df['university_url'].apply(extract_url_root)
+university_df = pd.read_csv("data/generated/universities_cleaned.csv")
 
 #%% Per-row processing
 def process_speciality_row(row):
@@ -102,24 +88,36 @@ def process_speciality_row(row):
             break
         try:
             disciplines = pipeline_utils.extract_discipline_names(url, sname) or []
-            log(f"            [{idx}] Extracted {len(disciplines)} disciplines from {url}", speciality_name=sname)
         except Exception as e:
             log(f"            [{idx}] FAIL extract_discipline_names url={url}: {e}", level="error", speciality_name=sname)
             continue
 
         # normalize and filter
         disciplines = [d.strip() for d in disciplines if d and d.strip().lower() != 'none']
-        if not disciplines or len(disciplines) <= 1:
-            log(f"            [{idx}] No relevant disciplines in study_plan url={url}", speciality_name=sname)
+        if not disciplines:
+            log(f"            [{idx}] Extracted no disciplines from {url}, skipping", level="warning", speciality_name=sname)
             continue
+        elif len(disciplines) <= 1:
+            log(f"            [{idx}] Extracted only discipline '{disciplines[0]}' from {url}, skipping", level="warning", speciality_name=sname)
+            continue
+        elif len(disciplines) <= 5:
+            log(f"            [{idx}] Extracted few disciplines {disciplines} from {url}", level="warning", speciality_name=sname)
+        else:
+            log(f"            [{idx}] Extracted {len(disciplines)} disciplines from {url}", speciality_name=sname)
+
         # Find matching university
-        uni = "Unknown"
-        for _, urow in university_df.iterrows():
-            if re.search(rf'\b{re.escape(urow["url_root"])}\b', url, re.IGNORECASE):
-                uni = urow['university_name']
-                break
-        if uni == "Unknown":
-            log(f"No matching university found for study_plan url={url}", level="warning", speciality_name=sname, university=uni)
+        study_plan_root = url_utils.extract_root(url)
+        matched_unis = university_df[university_df['url_root'] == study_plan_root]
+        if len(matched_unis) == 1:
+            uni = matched_unis.iloc[0]['name']
+        elif len(matched_unis) > 1:
+            uni = matched_unis.iloc[0]['name']
+            log(f"            [{idx}] Ambiguous university match for study_plan url={url}: {matched_unis['name'].tolist()}",
+                level="warning", speciality_name=sname)
+        else:
+            uni = "Unknown"
+            log(f"            [{idx}] No matching university found for study_plan url={url}",
+                level="warning", speciality_name=sname)
 
         local_rows.append({
             "speciality_code": scode,
@@ -129,8 +127,11 @@ def process_speciality_row(row):
             "disciplines": "; ".join(disciplines),
         })
         used += 1
-    if used < NUM_STUDY_PLANS:
-        log(f"            [{idx}] Could not find any study plans", speciality_name=sname)
+
+    if used == 0:
+        log(f"            [{idx}] No usable study plans found", level="warning", speciality_name=sname)
+    elif used < NUM_STUDY_PLANS:
+        log(f"            [{idx}] Used {used}/{NUM_STUDY_PLANS} study plans", level="warning", speciality_name=sname)
 
     log(f"[DONE]  [{idx}] → {len(local_rows)} rows", speciality_name=sname)
     return local_rows
@@ -156,11 +157,11 @@ def run_pipeline(df):
     try:
         with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
             futures = {
-                ex.submit(process_speciality_row, r): (r['speciality_code'], r['speciality_name'], r['university'])
+                ex.submit(process_speciality_row, r): (r['speciality_code'], r['speciality_name'])
                 for _, r in df.iterrows()
             }
             for fut in tqdm(as_completed(futures), total=len(futures), desc="Specialities"):
-                scode, sname, uni = futures[fut]
+                scode, sname = futures[fut]  # fixed unpacking (removed 'uni')
                 try:
                     batch = fut.result()
                 except Exception as e:
@@ -180,5 +181,3 @@ if __name__ == "__main__":
     if os.path.exists(OUTPUT_CSV):
         os.remove(OUTPUT_CSV)
     run_pipeline(speciality_df)
-
-# %%

@@ -39,7 +39,8 @@ def _google_search(query):
         "location": "Moscow, Moscow, Russia",
         "gl": "ru",
         "hl": "ru",
-        "autocorrect": False
+        "autocorrect": False,
+        "num": 100,
     })
     headers = {
         'X-API-KEY': api_key,

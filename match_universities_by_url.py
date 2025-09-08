@@ -1,42 +1,49 @@
 #%%
 import pandas as pd
 from tqdm import tqdm
-
+import src.url_utils as url_utils
 #%%
 study_plan_df = pd.read_csv("data/generated/specialities_with_study_plans.csv", delimiter=";")
 university_df = pd.read_csv("data/generated/universities_cleaned.csv")
 
-#%%
-import src.url_utils as url_utils
-
-unmatched = []
-for idx, row in tqdm(study_plan_df.iterrows(), total=len(study_plan_df), desc="Processing study plans"):
-    # print(f"[{idx}] {row['speciality_name']}: {url_utils.extract_root(row['study_plan_url'])} {row['study_plan_url']}")
-    url = row['study_plan_url']
-
-    uni = "Unknown"
-    matches = []
-    if not url or pd.isna(url):
-        print(f"study_plan_url is empty or NaN for idx={idx}")
-    else:
-        doc_root = url_utils.extract_root(url)
-        for _, urow in university_df.iterrows():
-            uni_root = urow.get("url_root")
-            if doc_root == uni_root:
-                uni_name = urow.get("abbreviation") if pd.notna(urow.get("abbreviation")) else urow.get("name")
-                matches.append((uni_name, uni_root, urow['url']))
-
-    if len(matches) == 0:
-        unmatched.append(url)
-        print(f"    No matching university found for study_plan url={url}")
-    elif len(matches) > 1:
-        print(f"Multiple ({len(matches)}) matching universities for study_plan url={url}:")
-        for abbr, uni_root, uurl in matches:
-            print(f" - {abbr}, root={uni_root}, url={uurl}")
-    else:
-        uni, uni_root, uni_url = matches[0]
-        # print(f"Matching university: {uni}, url={uni_url}, root={uni_root}")
-print(f"Total unmatched study_plan URLs: {len(unmatched)}")
-unmatched
-
 # %%
+import numpy as np
+import pandas as pd
+
+# --- 1) Prep universities (one row per url_root) ---
+u = university_df.copy()
+u['uni_name'] = np.where(u['abbreviation'].notna() & (u['abbreviation'] != ''),
+                         u['abbreviation'], u['name'])
+u = u[['url_root', 'uni_name', 'url']].dropna(subset=['url_root']).rename(columns={'url': 'uni_url'})
+
+# mark ambiguous roots (multiple universities share same root)
+u_counts = u.groupby('url_root').size().rename('match_count')
+u_first  = (u.sort_values(['url_root', 'uni_name'])
+              .drop_duplicates('url_root', keep='first')
+              .merge(u_counts, on='url_root', how='left')
+              .rename(columns={'url_root': 'doc_root'}))
+
+# --- 2) Prep study plans (compute roots once, then map) ---
+sp = study_plan_df.copy()
+
+# cache extract_root over unique URLs (faster if extract_root is non-trivial)
+uniq_urls = sp['study_plan_url'].dropna().unique()
+roots_map = {url: url_utils.extract_root(url) for url in uniq_urls}
+sp['doc_root'] = sp['study_plan_url'].map(roots_map)
+
+# --- 3) Join & outputs ---
+matched = sp.merge(u_first, on='doc_root', how='left', indicator=True)
+
+unmatched = matched.loc[(matched['_merge'] == 'left_only') & matched['study_plan_url'].notna(),
+                        'study_plan_url'].tolist()
+
+# rows whose root maps to multiple universities (optional: inspect these)
+ambiguous = (matched.loc[matched['match_count'].fillna(0) > 1, ['study_plan_url','doc_root']]
+                   .drop_duplicates()
+                   .merge(u.rename(columns={'url_root':'doc_root'}), on='doc_root', how='left')
+                   .sort_values(['study_plan_url','uni_name']))
+
+print(f"Total unmatched study_plan URLs: {len(unmatched)}")
+
+#%%
+matched

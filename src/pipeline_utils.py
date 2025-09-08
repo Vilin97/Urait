@@ -1,16 +1,16 @@
 import src.google_search as google_search
 import src.utils as utils
 
-def get_study_plan_urls(speciality_code, speciality_name, university_name):
+def get_study_plan_urls(speciality_code, speciality_name, university_info=""):
     """Get URLs of study plans for a given speciality"""
-    query = f"Направление подготовки {speciality_code} {speciality_name} \"учебный план\" {university_name} pdf"
+    query = f"Направление подготовки {speciality_code} {speciality_name} \"учебный план\" {university_info} pdf sveden"
     search_results = google_search.search(query)
     study_plan_urls = [r.get('url') for r in search_results]
     return study_plan_urls
 
 def extract_discipline_names(study_plan_url, speciality_name):
     """Parse URL to get discipline names"""
-    prompt = f"""Extract the names of all disciplines that are directly related to {speciality_name} and its closely connected applications from this study plan (учебный план). This includes both required and elective courses. 
+    prompt = f"""Extract the names of all disciplines that are directly related to '{speciality_name}' and its closely connected applications from this study plan (учебный план). This includes both required and elective courses. 
 
     Do not include:
     - Disciplines that are clearly outside the main subject area (for example, if the subject is history, drop math/physics/programming; if the subject is mathematics, drop languages, law, history, etc.).
@@ -24,12 +24,12 @@ def extract_discipline_names(study_plan_url, speciality_name):
     """
     llm_client = utils.get_gemini_client()
     parsed = utils.parse_document(study_plan_url, prompt, llm_client)
-    discipline_names = parsed.split('; ')
+    discipline_names = parsed.split(';')
     return discipline_names
 
-def get_work_program_urls(discipline_name, speciality_code, speciality_name, university_name):
+def get_work_program_urls(discipline_name, speciality_code, speciality_name, university_info=""):
     """Get URLs of work programs"""
-    query = f"\"{discipline_name}\" рабочая программа дисциплины {speciality_code} {speciality_name} {university_name} pdf"
+    query = f"\"{discipline_name}\" рабочая программа дисциплины {speciality_code} {speciality_name} {university_info} pdf"
     search_results = google_search.search(query)
     work_program_urls = [r.get('url') for r in search_results]
     return work_program_urls
