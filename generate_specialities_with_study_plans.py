@@ -11,7 +11,7 @@ import src.pipeline_utils as pipeline_utils
 import src.url_utils as url_utils
 
 #%% Config
-OUTPUT_CSV = "data/generated/study_plans_specialitet.csv"
+OUTPUT_CSV = "data/generated/study_plans_all.csv"
 NUM_STUDY_PLANS = 50
 NUM_WORKERS = 4
 FLUSH_MIN_ROWS = 5
@@ -63,9 +63,9 @@ def save_rows_to_csv(rows, filename=OUTPUT_CSV):
 
 #%% Load and prepare speciality + university pairs
 speciality_df = pd.read_csv("data/download/specialities.csv", sep=';')
-speciality_df = speciality_df[
-    speciality_df['speciality_code'].astype(str).str.strip().str.match(r'^\d{2}\.05\.\d{2}$', na=False)
-]
+# speciality_df = speciality_df[
+#     speciality_df['speciality_code'].astype(str).str.strip().str.match(r'^\d{2}\.05\.\d{2}$', na=False)
+# ]
 
 university_df = pd.read_csv("data/generated/universities_cleaned.csv")
 
