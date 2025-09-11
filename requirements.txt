@@ -5,3 +5,4 @@ httpx
 python-dotenv
 google-genai
 tldextract
+sentence_transformers

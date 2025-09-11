@@ -4,12 +4,14 @@ import logging
 import pandas as pd
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import numpy as np
+import re
 
 import src.pipeline_utils as pipeline_utils
 import src.url_utils as url_utils
 
 #%% Config
-OUTPUT_CSV = "data/generated/study_plans.csv"
+OUTPUT_CSV = "data/generated/study_plans_2.csv"
 NUM_STUDY_PLANS = 50
 NUM_WORKERS = 4
 FLUSH_MIN_ROWS = 5
@@ -183,8 +185,7 @@ if __name__ == "__main__":
     run_pipeline(speciality_df)
 
 #%%
-import numpy as np
-
+# Compute statistics
 study_plans_df = pd.read_csv(OUTPUT_CSV, sep=';')
 print(f"Generated {len(study_plans_df)} study plans for {len(study_plans_df['speciality_name'].unique())} specialities and {len(study_plans_df['university'].unique())} unique universities.")
 
@@ -197,83 +198,52 @@ num_unique_disciplines = len(unique_disciplines)
 print(f"Total discipline occurrences: {total_disciplines}")
 print(f"Unique disciplines (case-insensitive): {num_unique_disciplines}")
 
-# Build a dataframe with one row per discipline, summing students_amount across distinct universities
-# and recording "universities" (semi-colon separated). Also collect study_plan_urls (semi-colon separated).
+#%%
+# Aggregate by discipline
 university_df = pd.read_csv("data/generated/universities_cleaned.csv")
+df = pd.read_csv("data/generated/study_plans.csv", sep=';')
 
-disc_df = study_plans_df.copy()
-disc_df['discipline'] = disc_df['disciplines'].astype(str).str.split(r'\s*[;\.]\s*', regex=True)
-disc_df = disc_df.explode('discipline')
-disc_df['discipline'] = disc_df['discipline'].str.strip()
-disc_df = disc_df[disc_df['discipline'].astype(bool)].copy()
-disc_df['discipline_key'] = disc_df['discipline'].str.lower()
+# explode disciplines, map students from university_df, group & collect
+uamt = pd.to_numeric(university_df['students_amount'], errors='coerce').fillna(0).astype(int)
+m = dict(zip(university_df['name'].astype(str).str.strip(), uamt))
+m.update(dict(zip(university_df['abbreviation'].dropna().astype(str).str.strip(),
+                  uamt[university_df['abbreviation'].notna()])))
 
-# Normalize students_amount in university_df and create lookup
-uni_amount = university_df[['name', 'students_amount']].copy()
-uni_amount['students_amount'] = pd.to_numeric(uni_amount['students_amount'], errors='coerce').fillna(0).astype(int)
+w = df.copy()
+w['discipline'] = w['disciplines'].fillna('').str.split(r'\s*[;\.]\s*', regex=True)
+w = w.explode('discipline').drop_duplicates()
+w['discipline'] = w['discipline'].fillna('').str.strip().str.lower()
+w = w[w['discipline'].str.len() > 1]
+w['students_amount'] = w['university'].astype(str).str.strip().map(m).fillna(0).astype(int)
+w.sort_values('students_amount', ascending=False).drop(columns=['disciplines']).to_csv("data/generated/disciplines_all.csv", index=False, sep=';')
 
-# Attach students_amount to each discipline row (missing universities get 0)
-disc_df = disc_df.merge(uni_amount, how='left', left_on='university', right_on='name')
-disc_df['students_amount'] = disc_df['students_amount'].fillna(0).astype(int)
+g = (w.groupby('discipline', sort=False)
+       .agg(total_students_amount=('students_amount','sum'),
+            speciality_name=('speciality_name', list),
+            speciality_code=('speciality_code', list),
+            university=('university', list),
+            study_plan_urls=('study_plan_url', list))
+       .reset_index())
 
-# Aggregate per discipline_key:
-# - sum students_amount across distinct universities
-# - record semicolon-separated list of distinct universities (ordered by students_amount desc)
-# - record semicolon-separated list of distinct study_plan_urls
-df = disc_df.copy()
+g['num_speciality_name'] = g['speciality_name'].apply(lambda xs: sum(pd.notna(xs)))
+g['num_university'] = g['university'].apply(lambda xs: sum(pd.notna(xs)))
+for c in ['speciality_name','speciality_code','university','study_plan_urls']:
+    g[c] = g[c].apply(lambda xs: list(dict.fromkeys([v for v in xs if pd.notna(v) and str(v).strip()])))
+g['num_distinct_speciality_name'] = g['speciality_name'].apply(len)
+g['num_distinct_university'] = g['university'].apply(len)
 
-# Clean & helpers
-df['students_amount'] = pd.to_numeric(df['students_amount'], errors='coerce').fillna(0).astype(int)
-df['university'] = df['university'].fillna('Unknown').astype(str)
-df['study_plan_url'] = df['study_plan_url'].astype(str)
-df['discipline'] = df['discipline'].astype(str)
-df['_pos'] = np.arange(len(df))  # preserve original order across ops
+disciplines_grouped_df = g.sort_values('total_students_amount', ascending=False).reset_index(drop=True)
+disciplines_grouped_df
 
-# 1) Discipline per key (first by appearance)
-disc_first = (
-    df.sort_values('_pos')
-      .drop_duplicates('discipline_key')
-      .set_index('discipline_key')[['speciality_code', 'speciality_name', 'discipline']]
-)
+#%%
+# Add search counts
+query_df = pd.read_csv("data/download/search_queries.csv", usecols=["query","search_count"]).fillna({"query":""})
+query_df['query'] = query_df['query'].astype(str).str.strip().str.lower()
 
-# 2) Distinct URLs per key (keep first appearance order)
-urls_agg = (
-    df.dropna(subset=['study_plan_url'])
-      .sort_values('_pos')
-      .drop_duplicates(['discipline_key', 'study_plan_url'])
-      .groupby('discipline_key')['study_plan_url']
-      .agg('; '.join)
-      .rename('study_plan_url')
-)
+disciplines_grouped_df = disciplines_grouped_df.merge(
+    query_df, left_on='discipline', right_on='query', how='left'
+).drop(columns=['query']).fillna({'search_count': 0}).astype({'search_count': int})
 
-# 3) One row per (key, university) using first seen students_amount
-uni_first = (
-    df.sort_values('_pos')
-      .drop_duplicates(['discipline_key', 'university'])
-)
-
-# Sum across distinct universities
-sum_students = (
-    uni_first.groupby('discipline_key')['students_amount']
-             .sum()
-             .astype(int)
-             .rename('students_amount')
-)
-
-# Universities list ordered by students_amount desc, stable on first appearance
-uni_ordered = uni_first.sort_values(['discipline_key', 'students_amount', '_pos'],
-                                    ascending=[True, False, True])
-universities_agg = (
-    uni_ordered.groupby('discipline_key')['university']
-               .agg(lambda s: '; '.join([u for u in s if u and u.lower() != 'nan']))
-               .rename('universities')
-)
-
-# 4) Assemble
-disciplines_unique_df = pd.concat([disc_first, urls_agg, universities_agg, sum_students], axis=1).reset_index().sort_values('students_amount', ascending=False).drop(columns=['discipline_key']).reset_index(drop=True)
-disciplines_unique_df.rename(columns={'students_amount': 'total_students_amount', 'study_plan_url': 'study_plan_urls'}, inplace=True)
-disciplines_unique_df['num_universities'] = disciplines_unique_df['universities'].str.count(r'\s*;\s*') + 1
-
-print(f"Unique disciplines: {len(disciplines_unique_df)}")
-disciplines_unique_df.to_csv("data/generated/disciplines_with_student_amounts.csv", index=False, sep=';')
-
+disciplines_grouped_df.sort_values("search_count", ascending=False)
+disciplines_grouped_df.to_csv("data/generated/disciplines_by_popularity.csv", index=False, sep=';')
+# %%
