@@ -1,9 +1,9 @@
 # Urait course matching
 
-## Поиск новинок
-- Какие дисциплины преподаются? (50% done)
-- Какие из них не закрыты курсами Юрайт? (50% done)
-- Как закрыть эти дыры? (0% done)
+## Finding New Textbooks
+- What disciplines are taught? (50% done)
+- Which of them are not covered by Urait courses? (50% done)
+- How to fill these gaps? (0% done)
 
 ## Pipeline description
 
